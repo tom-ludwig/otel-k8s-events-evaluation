@@ -1,0 +1,163 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: otel-k8s-events-collector
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-k8s-events-collector
+  namespace: otel-k8s-events-collector
+spec:
+  mode: statefulset
+  replicas: 1
+  image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s:latest
+
+  # resources:
+  #   requests:
+  #     memory: "512Mi"
+  #     cpu: "500m"
+  #   limits:
+  #     memory: "1Gi"
+
+  observability:
+    metrics:
+      enableMetrics: true
+
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      protocol: TCP
+
+  # Needed for k8s_leader_election and k8s_events receivers
+  serviceAccount: otel-k8s-events-collector-sa
+
+  config:
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      k8s_leader_elector:
+        auth_type: serviceAccount
+        lease_name: otel-k8s-events-collector-event-lease
+        lease_namespace: otel-k8s-events-collector
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      k8s_events:
+        auth_type: serviceAccount
+        namespaces: [] # Scrape all namespaces
+        dedup_interval: 1m
+
+    processors:
+      resource/cluster:
+        attributes:
+          - key: cluster.name
+            value: "tom-evaluation"
+            action: upsert
+
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 200ms
+
+      # Drop "Normal" events to reduce noise
+      filter/events:
+        error_mode: ignore
+        logs:
+          log_record:
+            # k8s_events maps "Normal" to INFO (9) and "Warning" to WARN (13).
+            # This drops anything INFO or lower.
+            - "severity_number <= 9"
+            # - 'attributes["k8s.event.reason"] == "Created"'
+
+      transform/k8s_events_level:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              # k8s events only has 2 severity levels
+              - set(attributes["level"], "warn") where severity_text == "Warning"
+              - set(attributes["level"], "info") where severity_text == "Normal"
+
+    exporters:
+      otlp_http/vmsingle:
+        metrics_endpoint: "http://vmsingle-vm-single.monitoring.svc.cluster.local:8428/opentelemetry/api/v1/push"
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 5000
+
+      otlp_http/vlsingle:
+        logs_endpoint: "http://vlsingle-vl-single.monitoring.svc.cluster.local:9428/insert/opentelemetry/v1/logs"
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 5000
+
+    service:
+      telemetry:
+        logs:
+          level: WARN
+          encoding: json
+      extensions:
+        - health_check
+        - k8s_leader_elector
+      pipelines:
+        # k8s_events as LogRecord objects
+        logs/k8s_events:
+          receivers:
+            - k8s_events
+          processors:
+            - memory_limiter
+            # - filter/events
+            - transform/k8s_events_level
+            - batch
+          exporters:
+            - otlp_http/vlsingle
+---
+# Create a Service Account to allow the OTel collector to scrape k8s events from the api server
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-k8s-events-collector-sa
+  namespace: otel-k8s-events-collector
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-k8s-events-collector-role
+rules:
+  # Required by the k8s_events receiver
+  - apiGroups: ["events.k8s.io", ""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  # Required by the k8sleaderelector extension
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-k8s-events-collector-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: otel-k8s-events-collector-sa
+    namespace: otel-k8s-events-collector
+roleRef:
+  kind: ClusterRole
+  name: otel-k8s-events-collector-role
+  apiGroup: rbac.authorization.k8s.io
