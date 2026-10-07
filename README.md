@@ -2,6 +2,9 @@
 
 In this repository I want to evaluate if the `k8s_events` reciver paired with `k8s_leader_elector` works well and how `k8s_objects` compares against it.
 
+The repository includes all configuration files needed to run the otel collectors and monitor them.
+It also includes an event-generate writting in Go. It generates "realistic" Kubernetes events at a controllable rate.
+
 Why is this test of importants? Becuase `k8s_objects` is essentailly the generic and better implementation of `k8s_events`. Also `k8s_events` was standing close to beeing deprecated, and is still in `alpha` while `k8s_objects` is in `beta` and has a more stable api.
 `k8s_events` has native features like a deduplication of events, while `k8s_objects` has better and more fine grained query support, for example instead of pulling all events and then filitering for only warning events, `k8s_objects` can direclty query the api server to only return warning events.
 But most importantly `k8s_events` automatically parses the event into a readable and proper log. With `k8s_objects` this would have to happen via OpenTelemetry Transformation Language (OTTL) which may be slower and more resource intensive.
@@ -29,11 +32,11 @@ But most importantly `k8s_events` automatically parses the event into a readable
 
 Practial Evaluation:
 
-- [ ] Research a realistic event creation ammount and warning ratio
-  - =>
-- [ ] Write Event Generator
-- [ ] Deploy Prerequistis on Gardener
-- [ ] Prepare Dashbaord for load test
+- [x] Research a realistic event creation ammount and warning ratio
+  - => event creation is rather small, with 300 events/s on moderate clusters as far as I know. This means a load test is not really needed since 300-1000events/s shouldn't be an issue for otel collector. this shifts the performance test rather to an efficency test, and checks on the memory and cpu consumption.
+- [x] Write Event Generator
+- [x] Deploy Prerequistis on Gardener
+- [x] Prepare Dashbaord for load test
 - [ ] Run load tests
   - [ ] `k8s_events`
     - [ ] Include all events
@@ -122,4 +125,16 @@ Formal Evaluation:
 
   ```bash
   kubectl get secret --namespace monitoring grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+  ```
+
+- **OpenTelemetry K8s Events Collector**
+
+  ```bash
+  kubectl apply -f ./k8s/otel-collector-events.yaml
+  ```
+
+- **OpenTelemetry K8s Objects Collector**
+
+  ```bash
+  kubectl apply -f ./k8s/otel-collector-objects.yaml
   ```
