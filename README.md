@@ -16,13 +16,13 @@ But most importantly `k8s_events` automatically parses the event into a readable
 ## Prerequisits
 
 - Prometheus CRDs
-- KSM
-- cAdvisor
+- Cert-manager
+- OTel Operator
 - VictoriaOperator
   - VictoriaMetrics Single
-  - VictoriaMetrics Agent
+  - VictoriaLogs Single
+  - VictoriaMetrics Agent with cAdvisor Scrape
 - Grafana
-- OTel Operator
 - Event Generator
 
 ## Steps
@@ -47,3 +47,79 @@ Formal Evaluation:
 
 - [ ] Compare maturity of `k8s_events` and `k8s_objects` (Theses: `k8s_events` needs overhaul and proper SemConV)
 - [ ] Compare log output quallity
+
+## Quick Start
+
+- **Namespace**
+
+```bash
+kubectl create namespace monitoring
+```
+
+- **Prometheus CRDs**
+
+  ```bash
+    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+    helm install my-prometheus-operator-crds prometheus-community/prometheus-operator-crds \
+    --version 32.0.1 \
+    --values ./k8s/prometheus-crds-values.yaml \
+    --namespace monitoring
+  ```
+
+- **Cert-Manager**
+
+> [!WARNING]
+> Cert Manager values are tuned for a Gardener Shoot Cluster. Double-check if those values apply to you.
+
+```bash
+helm install \
+  cert-manager oci://quay.io/jetstack/charts/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version v1.21.2 \
+  --values k8s/cert-manager-values.yaml
+```
+
+- **OpenTelemetry Operator**
+
+  ```bash
+  helm repo add opentelemetry-helm https://open-telemetry.github.io/opentelemetry-helm-charts
+  helm install my-opentelemetry-operator opentelemetry-helm/opentelemetry-operator \
+    --version 0.123.1 \
+    --values k8s/otel-operator-values.yaml \
+    --namespace monitoring
+  ```
+
+- **VictoriaMetrics Operator**
+
+  ```bash
+  helm repo add victoriametrics https://victoriametrics.github.io/helm-charts/
+  helm install my-victoria-metrics-operator victoriametrics/victoria-metrics-operator \
+    --version 0.68.1 \
+    --values k8s/vm-operator-values.yaml \
+    --namespace monitoring
+  ```
+
+- **VictoriaMetrics Components**
+
+  ```bash
+  kubectl apply -f ./k8s/vm-single.yaml
+  kubectl apply -f ./k8s/vm-agent.yaml # Also includes scrape config for cAdvisor
+  kubectl apply -f ./k8s/vl-single.yaml
+  ```
+
+- **Grafana**
+
+  ```bash
+  helm install grafana oci://ghcr.io/grafana-community/helm-charts/grafana \
+  --version 13.2.8 \
+  --values ./k8s/grafana-values.yaml \
+  --namespace monitoring
+  ```
+
+- **Access Grafana**
+  Retrive Grafana `admin` user password:
+
+  ```bash
+  kubectl get secret --namespace monitoring grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+  ```
