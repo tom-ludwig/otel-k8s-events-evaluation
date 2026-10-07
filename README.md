@@ -52,9 +52,9 @@ Formal Evaluation:
 
 - **Namespace**
 
-```bash
-kubectl create namespace monitoring
-```
+  ```bash
+  kubectl create namespace monitoring
+  ```
 
 - **Prometheus CRDs**
 
@@ -68,17 +68,17 @@ kubectl create namespace monitoring
 
 - **Cert-Manager**
 
+  ```bash
+  helm install \
+    cert-manager oci://quay.io/jetstack/charts/cert-manager \
+    --namespace cert-manager \
+    --create-namespace \
+    --version v1.21.2 \
+    --values k8s/cert-manager-values.yaml
+  ```
+
 > [!WARNING]
 > Cert Manager values are tuned for a Gardener Shoot Cluster. Double-check if those values apply to you.
-
-```bash
-helm install \
-  cert-manager oci://quay.io/jetstack/charts/cert-manager \
-  --namespace cert-manager \
-  --create-namespace \
-  --version v1.21.2 \
-  --values k8s/cert-manager-values.yaml
-```
 
 - **OpenTelemetry Operator**
 
