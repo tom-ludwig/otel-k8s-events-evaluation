@@ -1,0 +1,31 @@
+resources:
+  limits:
+    memory: "256Mi"
+  requests:
+    cpu: "10m"
+    memory: "50Mi"
+
+replicaCount: 1
+
+crds:
+  enabled: true
+  plain: false
+  upgrade:
+    enabled: true
+    forceConflicts: true
+
+# -- Validation Webhooks
+admissionWebhooks:
+  enabled: true
+  certManager:
+    enabled: true
+
+operator:
+  disable_prometheus_converter: false
+  enable_converter_ownership: true
+
+serviceMonitor:
+  enabled: true
+  vm: false
+
+watchNamespaces: []

@@ -1,0 +1,52 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMAgent
+metadata:
+  name: vmagent
+  namespace: monitoring
+spec:
+  replicaCount: 1
+  selectAllByDefault: true
+  # Add cluster name as a label to each metric
+  externalLabels:
+    cluster: "tom-evaluation"
+
+  remoteWrite:
+    - url: "http://vmsingle-vm-single.monitoring.svc.cluster.local:8428/api/v1/write"
+      inlineUrlRelabelConfig:
+        - source_labels: [__name__]
+          regex: "^flag$"
+          action: drop
+        # Drop the redundant and unnecessary labels globally
+        - action: labeldrop
+          regex: "^(beta_kubernetes_io_os|node_k0sproject_io_role|flatcar_linux_.*)$"
+
+  resources:
+    requests:
+      memory: "80Mi"
+      cpu: "50m"
+    limits:
+      memory: "512Mi"
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMNodeScrape
+metadata:
+  name: cadvisor-metrics
+  namespace: monitoring
+spec:
+  scheme: "https"
+  tlsConfig:
+    insecureSkipVerify: true
+    caFile: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  bearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+  path: /metrics/cadvisor
+  relabelConfigs:
+    - action: labelmap
+      regex: __meta_kubernetes_node_label_(.+)
+    - source_labels: [__metrics_path__]
+      target_label: metrics_path
+    - action: replace
+      target_label: job
+      replacement: kubelet
+  metricRelabelConfigs:
+    - action: drop_metrics
+      regex: "container_tasks_state|container_memory_failures_total"

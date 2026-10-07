@@ -1,0 +1,19 @@
+manager:
+  featureGatesMap:
+    operator.networkpolicy: false
+    operand.networkpolicy: false
+  collectorImage:
+    repository: otel/opentelemetry-collector-k8s
+
+  resources:
+    limits:
+      memory: "512Mi"
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+
+admissionWebhooks:
+  certManager:
+    enabled: true
+  autoGenerateCert:
+    enabled: false

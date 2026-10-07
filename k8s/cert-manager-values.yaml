@@ -1,0 +1,28 @@
+crds:
+  enabled: true
+
+webhook:
+  timeoutSeconds: 10
+  podLabels:
+    remediation.webhook.shoot.gardener.cloud/exclude: "true"
+  validatingWebhookConfiguration:
+    namespaceSelector:
+      matchExpressions:
+        - key: "cert-manager.io/disable-validation"
+          operator: "NotIn"
+          values:
+            - "true"
+        - key: "kubernetes.io/metadata.name"
+          operator: "NotIn"
+          values:
+            - "kube-system"
+            - "cert-manager"
+
+  mutatingWebhookConfiguration:
+    namespaceSelector:
+      matchExpressions:
+        - key: "kubernetes.io/metadata.name"
+          operator: "NotIn"
+          values:
+            - "kube-system"
+            - "cert-manager"
