@@ -9,12 +9,23 @@ Why is this test of importants? Becuase `k8s_objects` is essentailly the generic
 `k8s_events` has native features like a deduplication of events, while `k8s_objects` has better and more fine grained query support, for example instead of pulling all events and then filitering for only warning events, `k8s_objects` can direclty query the api server to only return warning events.
 But most importantly `k8s_events` automatically parses the event into a readable and proper log. With `k8s_objects` this would have to happen via OpenTelemetry Transformation Language (OTTL) which may be slower and more resource intensive.
 
+Consider this (WIP) sketch of the desired Architecture:
+![Sketch of Architecture (WIP)](./desired-architecture.drawio.svg)
+
 ## Requirements for the adoption of `k8s_objects`
 
+Sorted from most to least important:
+
+- [ ] **The deduplication can be achived differently or is deemed not important**
+- [ ] No context, style or other information is lost in the end log compared to `k8s_events`
 - [ ] A performance gain is seen from adapting the query for only WARNING events
 - [ ] A major performance degration form manuall parsing is not observed
-- [ ] No context, style or other information is lost in the end log compared to `k8s_events`
-- [ ] The deduplication can be achived differently or is deemed not important
+
+### Alternative considerations
+
+- [ ] Evaluate `k8s_events` against otel log [k8s semmatic conventions](https://opentelemetry.io/docs/specs/semconv/registry/attributes/k8s/)
+- [ ] Contribute to `k8s_events` receiver upstream to make it SemConV compliant.
+- [ ] Just add a custom transformer that would use OTTL to export compliant logs
 
 ## Prerequisits
 
