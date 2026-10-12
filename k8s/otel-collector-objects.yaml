@@ -1,0 +1,205 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: otel-k8s-objects-collector
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-k8s-objects-collector
+  namespace: otel-k8s-objects-collector
+spec:
+  mode: statefulset
+  replicas: 1
+  image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s:latest
+
+  # resources:
+  #   requests:
+  #     memory: "512Mi"
+  #     cpu: "500m"
+  #   limits:
+  #     memory: "1Gi"
+
+  observability:
+    metrics:
+      enableMetrics: true
+
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      protocol: TCP
+
+  # Needed for k8s_leader_elector and k8s_objects receivers
+  serviceAccount: otel-k8s-objects-collector-sa
+
+  config:
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+      k8s_leader_elector:
+        auth_type: serviceAccount
+        lease_name: otel-k8s-objects-collector-lease
+        lease_namespace: otel-k8s-objects-collector
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      k8s_objects:
+        auth_type: serviceAccount
+        objects:
+          - name: events
+            mode: watch
+            namespaces: [] # Scrape all namespaces
+            field_selector: type=Warning
+
+    processors:
+      resource/cluster:
+        attributes:
+          - key: cluster.name
+            value: "tom-evaluation"
+            action: upsert
+
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 200ms
+
+      # Drop "Normal" events to reduce noise (backup filter in case
+      # field_selector is not honoured by the API server).
+      # In watch mode the body is wrapped:
+      #   body["type"]           = watch type (ADDED, MODIFIED, DELETED)
+      #   body["object"]         = the actual K8s Event object
+      #   body["object"]["type"] = "Normal" or "Warning"
+      filter/events:
+        error_mode: ignore
+        logs:
+          log_record:
+            - 'body["object"]["type"] == "Normal"'
+            # - 'body["object"]["reason"] == "Created"'
+
+      # Extract structured fields from the raw K8s Event body.
+      # In watch mode the K8s Event lives under body["object"].
+      transform/k8s_objects:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              # --- Severity ---
+              - set(severity_text, "WARN") where body["object"]["type"] == "Warning"
+              - set(severity_number, 13) where body["object"]["type"] == "Warning"
+              - set(severity_text, "INFO") where body["object"]["type"] == "Normal"
+              - set(severity_number, 9) where body["object"]["type"] == "Normal"
+              - set(attributes["level"], "warn") where body["object"]["type"] == "Warning"
+              - set(attributes["level"], "info") where body["object"]["type"] == "Normal"
+
+              # --- Watch metadata ---
+              - set(attributes["k8s.watch.type"], body["type"]) where body["type"] != nil
+
+              # --- Event core fields ---
+              - set(attributes["k8s.event.type"], body["object"]["type"]) where body["object"]["type"] != nil
+              - set(attributes["k8s.event.reason"], body["object"]["reason"]) where body["object"]["reason"] != nil
+              - set(attributes["k8s.event.action"], body["object"]["action"]) where body["object"]["action"] != nil
+              - set(attributes["k8s.event.message"], body["object"]["message"]) where body["object"]["message"] != nil
+              - set(attributes["k8s.event.count"], body["object"]["count"]) where body["object"]["count"] != nil
+              - set(attributes["k8s.event.uid"], body["object"]["metadata"]["uid"]) where body["object"]["metadata"]["uid"] != nil
+
+              # --- Involved object (the resource the event is about) ---
+              - set(attributes["k8s.object.kind"], body["object"]["involvedObject"]["kind"]) where body["object"]["involvedObject"]["kind"] != nil
+              - set(attributes["k8s.object.name"], body["object"]["involvedObject"]["name"]) where body["object"]["involvedObject"]["name"] != nil
+              - set(attributes["k8s.object.uid"], body["object"]["involvedObject"]["uid"]) where body["object"]["involvedObject"]["uid"] != nil - set(attributes["k8s.namespace.name"], body["object"]["involvedObject"]["namespace"]) where body["object"]["involvedObject"]["namespace"] != nil
+
+              # --- Source (component that reported the event) ---
+              - set(attributes["k8s.event.source.component"], body["object"]["source"]["component"]) where body["object"]["source"]["component"] != nil
+              - set(attributes["k8s.event.source.host"], body["object"]["source"]["host"]) where body["object"]["source"]["host"] != nil
+              - set(attributes["k8s.event.reporting.component"], body["object"]["reportingComponent"]) where body["object"]["reportingComponent"] != nil
+              - set(attributes["k8s.event.reporting.instance"], body["object"]["reportingInstance"]) where body["object"]["reportingInstance"] != nil
+
+              # --- Timestamps ---
+              - set(attributes["k8s.event.first_timestamp"], body["object"]["firstTimestamp"]) where body["object"]["firstTimestamp"] != nil
+              - set(attributes["k8s.event.last_timestamp"], body["object"]["lastTimestamp"]) where body["object"]["lastTimestamp"] != nil
+
+              # --- Set the log body to the human-readable message for cleaner output ---
+              - set(body, body["object"]["message"]) where body["object"]["message"] != nil
+
+    exporters:
+      otlp_http/vmsingle:
+        metrics_endpoint: "http://vmsingle-vm-single.monitoring.svc.cluster.local:8428/opentelemetry/api/v1/push"
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 5000
+
+      otlp_http/vlsingle:
+        logs_endpoint: "http://vlsingle-vl-single.monitoring.svc.cluster.local:9428/insert/opentelemetry/v1/logs"
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 5000
+
+    service:
+      telemetry:
+        logs:
+          level: WARN
+          encoding: json
+      extensions:
+        - health_check
+        - k8s_leader_elector
+      pipelines:
+        # k8s objects (events) as LogRecord objects
+        logs/k8s_objects:
+          receivers:
+            - k8s_objects
+          processors:
+            - memory_limiter
+            # - filter/events
+            - transform/k8s_objects
+            - resource/cluster
+            - batch
+          exporters:
+            - otlp_http/vlsingle
+---
+# Service Account for the OTel collector to watch k8s objects from the API server
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-k8s-objects-collector-sa
+  namespace: otel-k8s-objects-collector
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-k8s-objects-collector-role
+rules:
+  # Required by the k8s_objects receiver (watching events)
+  - apiGroups: ["events.k8s.io", ""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  # Required by the k8sleaderelector extension
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-k8s-objects-collector-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: otel-k8s-objects-collector-sa
+    namespace: otel-k8s-objects-collector
+roleRef:
+  kind: ClusterRole
+  name: otel-k8s-objects-collector-role
+  apiGroup: rbac.authorization.k8s.io
